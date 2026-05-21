@@ -191,11 +191,14 @@ export function Wheel({ spinning, winner, mode, onComplete, onTick, onBlurStart 
       const curSeg = Math.floor(curPos / SEG_DEG) % SEG_COUNT;
       if (curSeg !== lastSeg) { onTick?.(progress); lastSeg = curSeg; }
 
-      // Dramatic: blur starts at 82%, intensifies to full at ~97%
-      if (mode === 'dramatic' && progress >= 0.82) {
-        const blurPct = Math.min((progress - 0.82) / 0.15, 1);
+      // Dramatic: blur based on EASED position (how far through the rotation),
+      // not clock time — otherwise the wheel stops visibly before blur starts.
+      // eased >= 0.82 means 82% of total rotation covered; wheel still has
+      // ~1–2 visible spins left so names blur while it's still moving.
+      if (mode === 'dramatic' && eased >= 0.82) {
+        const blurPct = Math.min((eased - 0.82) / 0.14, 1);
         if (canvasRef.current) {
-          canvasRef.current.style.filter = `blur(${blurPct * 14}px)`;
+          canvasRef.current.style.filter = `blur(${blurPct * 15}px)`;
         }
         if (!blurFired.current) { blurFired.current = true; onBlurStart?.(); }
       }

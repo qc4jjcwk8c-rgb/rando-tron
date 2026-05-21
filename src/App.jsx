@@ -12,11 +12,18 @@ import './App.css';
 const HANNAH_COLORS = ['#FF1A6E','#FF4187','#FFD700','#FF69B4','#ffffff'];
 const ELVIE_COLORS  = ['#6600FF','#7B2BFF','#FFD700','#00BFFF','#ffffff'];
 
+const AUDIO_MODES = [
+  { id: 'drone',     label: '🎵',  name: 'Drone'      },
+  { id: 'crowd',     label: '👥',  name: 'Crowd'      },
+  { id: 'countdown', label: '🎬',  name: 'Countdown'  },
+  { id: 'beeping',   label: '🔔',  name: 'Beeping'    },
+];
+
 function fireConfetti(winner) {
   const colors = winner === 'Hannah' ? HANNAH_COLORS : ELVIE_COLORS;
   const opts = { particleCount: 100, spread: 65, colors, startVelocity: 48 };
-  confetti({ ...opts, angle: 55,  origin: { x: 0,    y: 0.65 } });
-  confetti({ ...opts, angle: 125, origin: { x: 1,    y: 0.65 } });
+  confetti({ ...opts, angle: 55,  origin: { x: 0,   y: 0.65 } });
+  confetti({ ...opts, angle: 125, origin: { x: 1,   y: 0.65 } });
   setTimeout(() => {
     confetti({ ...opts, particleCount: 70, angle: 75,  origin: { x: 0.15, y: 0.7 } });
     confetti({ ...opts, particleCount: 70, angle: 105, origin: { x: 0.85, y: 0.7 } });
@@ -25,6 +32,7 @@ function fireConfetti(winner) {
 
 export default function App() {
   const [mode, setMode]             = useState('normal');
+  const [audioMode, setAudioMode]   = useState('drone');
   const [spinning, setSpinning]     = useState(false);
   const [winner, setWinner]         = useState(null);
   const [showResult, setShowResult] = useState(false);
@@ -32,9 +40,26 @@ export default function App() {
 
   const { stats, addSpin } = useStats();
   const {
-    playTick, startTension, stopTension,
-    playEnvelopeWoosh, playEnvelopeOpen, playFanfare, wake,
+    playTick,
+    startDrone, startCrowd, startCountdown, startBeeping,
+    stopAmbient, stopBeeping,
+    playEnvelopeWoosh, playEnvelopeOpen, playFanfare,
+    wake,
   } = useSound();
+
+  const startAmbient = useCallback(() => {
+    switch (audioMode) {
+      case 'drone':     startDrone();     break;
+      case 'crowd':     startCrowd();     break;
+      case 'countdown': startCountdown(); break;
+      case 'beeping':   startBeeping();   break;
+    }
+  }, [audioMode, startDrone, startCrowd, startCountdown, startBeeping]);
+
+  const stopAllAmbient = useCallback((fade = 0.8) => {
+    stopAmbient(fade);
+    stopBeeping(); // beeping nodes are separate
+  }, [stopAmbient, stopBeeping]);
 
   const handleSpin = useCallback(() => {
     wake();
@@ -43,31 +68,25 @@ export default function App() {
     setShowResult(false);
     setShowEnvelope(false);
     setSpinning(true);
-    if (mode === 'dramatic') startTension();
-  }, [mode, startTension, wake]);
+    if (mode === 'dramatic') startAmbient();
+  }, [mode, startAmbient, wake]);
 
-  const handleTick = useCallback((progress) => {
-    playTick(progress);
-  }, [playTick]);
-
-  // Fired at 82% of dramatic spin when blur begins — nothing extra needed now
+  const handleTick    = useCallback((p) => playTick(p), [playTick]);
   const handleBlurStart = useCallback(() => {}, []);
 
   const handleComplete = useCallback((w) => {
     setSpinning(false);
     addSpin(w);
-
     if (mode === 'dramatic') {
-      stopTension(0.8);
-      setShowEnvelope(true);   // envelope takes over from here
+      stopAllAmbient(0.7);
+      setShowEnvelope(true);
     } else {
       setShowResult(true);
       playFanfare();
       fireConfetti(w);
     }
-  }, [mode, addSpin, stopTension, playFanfare]);
+  }, [mode, addSpin, stopAllAmbient, playFanfare]);
 
-  // Called by Envelope when reveal is complete
   const handleEnvelopeDone = useCallback(() => {
     if (winner) fireConfetti(winner);
   }, [winner]);
@@ -88,6 +107,26 @@ export default function App() {
 
       <ModeToggle mode={mode} onChange={handleModeChange} />
 
+      {/* Audio mode picker — only visible in Dramatic mode */}
+      {mode === 'dramatic' && (
+        <div className="audio-picker">
+          <span className="audio-picker-label">Audio</span>
+          <div className="audio-picker-btns">
+            {AUDIO_MODES.map(({ id, label, name }) => (
+              <button
+                key={id}
+                className={`audio-btn ${audioMode === id ? 'active' : ''}`}
+                onClick={() => !spinning && setAudioMode(id)}
+                disabled={spinning}
+              >
+                <span className="audio-icon">{label}</span>
+                <span className="audio-name">{name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="wheel-section">
         <Wheel
           spinning={spinning}
@@ -97,8 +136,6 @@ export default function App() {
           onTick={handleTick}
           onBlurStart={handleBlurStart}
         />
-
-        {/* Envelope overlays the wheel in dramatic mode */}
         {showEnvelope && winner && (
           <Envelope
             winner={winner}
@@ -118,7 +155,6 @@ export default function App() {
         {spinning ? (mode === 'dramatic' ? '🎭' : '…') : 'SPIN!'}
       </button>
 
-      {/* Normal mode result only */}
       <ResultDisplay winner={winner} visible={showResult} />
 
       <Stats stats={stats} />
