@@ -8,134 +8,157 @@ function getCtx(ref) {
   return ref.current;
 }
 
-function makePinkNoise(ctx, durationSec) {
-  const sr = ctx.sampleRate;
-  const buf = ctx.createBuffer(2, sr * durationSec, sr);
-  for (let ch = 0; ch < 2; ch++) {
-    const d = buf.getChannelData(ch);
-    let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
-    for (let i = 0; i < d.length; i++) {
-      const w = Math.random() * 2 - 1;
-      b0 = 0.99886*b0 + w*0.0555179;
-      b1 = 0.99332*b1 + w*0.0750759;
-      b2 = 0.96900*b2 + w*0.1538520;
-      b3 = 0.86650*b3 + w*0.3104856;
-      b4 = 0.55000*b4 + w*0.5329522;
-      b5 = -0.7616*b5 - w*0.0168980;
-      d[i] = (b0+b1+b2+b3+b4+b5+b6+w*0.5362)*0.11;
-      b6 = w*0.115926;
-    }
-  }
-  return buf;
-}
-
 export function useSound() {
-  const ctxRef = useRef(null);
-  const cheerRef = useRef(null);
+  const ctxRef     = useRef(null);
+  const tensionRef = useRef(null);
 
+  // ── Wheel tick (ratchet click) ────────────────────────────────
   const playTick = useCallback((progress = 0.5) => {
     const ctx = getCtx(ctxRef);
-    const volume = Math.max(0.04, 0.5 * (1 - progress * 0.6));
-    const bufLen = Math.floor(ctx.sampleRate * 0.035);
-    const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufLen * 0.25));
+    const volume = Math.max(0.04, 0.5 * (1 - progress * 0.55));
+    const len = Math.floor(ctx.sampleRate * 0.032);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d   = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len * 0.22));
     }
-    const src = ctx.createBufferSource();
+    const src  = ctx.createBufferSource();
     src.buffer = buf;
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 3000;
+    const hp   = ctx.createBiquadFilter();
+    hp.type    = 'highpass';
+    hp.frequency.value = 3200;
     const gain = ctx.createGain();
     gain.gain.value = volume;
-    src.connect(hp);
-    hp.connect(gain);
-    gain.connect(ctx.destination);
+    src.connect(hp); hp.connect(gain); gain.connect(ctx.destination);
     src.start();
   }, []);
 
-  const startCheering = useCallback(() => {
+  // ── Dramatic tension drone ────────────────────────────────────
+  const startTension = useCallback(() => {
     const ctx = getCtx(ctxRef);
-    if (cheerRef.current) return;
-
-    const noiseBuf = makePinkNoise(ctx, 20);
-    const src = ctx.createBufferSource();
-    src.buffer = noiseBuf;
-    src.loop = true;
-
-    const bp1 = ctx.createBiquadFilter();
-    bp1.type = 'bandpass';
-    bp1.frequency.value = 900;
-    bp1.Q.value = 0.8;
-
-    const bp2 = ctx.createBiquadFilter();
-    bp2.type = 'bandpass';
-    bp2.frequency.value = 2200;
-    bp2.Q.value = 1.2;
-
-    const lfo = ctx.createOscillator();
-    lfo.frequency.value = 2.5;
-    lfo.type = 'sine';
-    const lfoG = ctx.createGain();
-    lfoG.gain.value = 250;
-    lfo.connect(lfoG);
-    lfoG.connect(bp1.frequency);
-    lfo.start();
+    if (tensionRef.current) return;
 
     const master = ctx.createGain();
     master.gain.setValueAtTime(0, ctx.currentTime);
-    master.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 1.2);
-
-    src.connect(bp1);
-    bp1.connect(master);
-    src.connect(bp2);
-    bp2.connect(master);
+    master.gain.linearRampToValueAtTime(0.22, ctx.currentTime + 1.5);
     master.connect(ctx.destination);
-    src.start();
 
-    cheerRef.current = { src, master, lfo };
+    const sources = [];
+
+    // Low root drone
+    [[55, 'sawtooth', 0.6], [110, 'triangle', 0.4], [165, 'sine', 0.25], [220, 'sine', 0.15]]
+      .forEach(([freq, type, vol]) => {
+        const osc = ctx.createOscillator();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(freq * 1.025, ctx.currentTime + 10);
+
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(280, ctx.currentTime);
+        lp.frequency.linearRampToValueAtTime(800, ctx.currentTime + 9);
+
+        const g = ctx.createGain();
+        g.gain.value = vol;
+
+        osc.connect(lp); lp.connect(g); g.connect(master);
+        osc.start();
+        sources.push(osc);
+      });
+
+    // Slow tremolo LFO on master volume
+    const lfo   = ctx.createOscillator();
+    lfo.frequency.value = 4;
+    const lfoG  = ctx.createGain();
+    lfoG.gain.value = 0.05;
+    lfo.connect(lfoG);
+    lfoG.connect(master.gain);
+    lfo.start();
+    sources.push(lfo);
+
+    tensionRef.current = { sources, master };
   }, []);
 
-  const stopCheering = useCallback((fade = 1.5) => {
-    if (!cheerRef.current) return;
-    const ctx = ctxRef.current;
-    const { src, master, lfo } = cheerRef.current;
-    master.gain.linearRampToValueAtTime(0, ctx.currentTime + fade);
-    setTimeout(() => {
-      try { src.stop(); lfo.stop(); } catch {}
-    }, (fade + 0.2) * 1000);
-    cheerRef.current = null;
-  }, []);
-
-  const playFanfare = useCallback(() => {
+  const stopTension = useCallback((fade = 1.2) => {
+    if (!tensionRef.current) return;
     const ctx = getCtx(ctxRef);
+    const { sources, master } = tensionRef.current;
+    master.gain.linearRampToValueAtTime(0, ctx.currentTime + fade);
+    setTimeout(() => { sources.forEach(s => { try { s.stop(); } catch {} }); }, (fade + 0.2) * 1000);
+    tensionRef.current = null;
+  }, []);
+
+  // ── Envelope appear woosh ─────────────────────────────────────
+  const playEnvelopeWoosh = useCallback(() => {
+    const ctx = getCtx(ctxRef);
+    const osc = ctx.createOscillator();
+    osc.type  = 'sine';
+    osc.frequency.setValueAtTime(1800, ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(260, ctx.currentTime + 0.45);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.22, ctx.currentTime);
+    g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.45);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime + 0.5);
+  }, []);
+
+  // ── Envelope flap open sound ──────────────────────────────────
+  const playEnvelopeOpen = useCallback(() => {
+    const ctx = getCtx(ctxRef);
+
+    // Paper rustle
+    const nLen = Math.floor(ctx.sampleRate * 0.18);
+    const nBuf = ctx.createBuffer(1, nLen, ctx.sampleRate);
+    const nd   = nBuf.getChannelData(0);
+    for (let i = 0; i < nLen; i++) {
+      nd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (nLen * 0.35));
+    }
+    const nSrc = ctx.createBufferSource();
+    nSrc.buffer = nBuf;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 5000;
+    const nG = ctx.createGain(); nG.gain.value = 0.28;
+    nSrc.connect(hp); hp.connect(nG); nG.connect(ctx.destination);
+    nSrc.start();
+
+    // Rising bell tone
+    const bell = ctx.createOscillator();
+    bell.type  = 'sine';
+    bell.frequency.setValueAtTime(350, ctx.currentTime);
+    bell.frequency.linearRampToValueAtTime(900, ctx.currentTime + 0.35);
+    const bG = ctx.createGain();
+    bG.gain.setValueAtTime(0, ctx.currentTime);
+    bG.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.04);
+    bG.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.55);
+    bell.connect(bG); bG.connect(ctx.destination);
+    bell.start(); bell.stop(ctx.currentTime + 0.6);
+  }, []);
+
+  // ── Winner fanfare ────────────────────────────────────────────
+  const playFanfare = useCallback(() => {
+    const ctx   = getCtx(ctxRef);
     const notes = [523.25, 659.25, 783.99, 1046.50];
-    const delays = [0, 0.18, 0.36, 0.6];
+    const times = [0, 0.18, 0.36, 0.60];
 
     notes.forEach((freq, i) => {
       ['triangle', 'sine'].forEach((type, j) => {
         const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = type;
+        const g   = ctx.createGain();
+        osc.type  = type;
         osc.frequency.value = j === 1 ? freq * 2 : freq;
-        const t = ctx.currentTime + delays[i];
+        const t   = ctx.currentTime + times[i];
         const vol = j === 0 ? 0.28 : 0.12;
-        gain.gain.setValueAtTime(0, t);
-        gain.gain.linearRampToValueAtTime(vol, t + 0.04);
-        gain.gain.linearRampToValueAtTime(vol * 0.6, t + 0.2);
-        gain.gain.linearRampToValueAtTime(0, t + (i === 3 ? 0.9 : 0.4));
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(t);
-        osc.stop(t + (i === 3 ? 1.0 : 0.5));
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(vol, t + 0.04);
+        g.gain.linearRampToValueAtTime(vol * 0.55, t + 0.22);
+        g.gain.linearRampToValueAtTime(0, t + (i === 3 ? 0.95 : 0.42));
+        osc.connect(g); g.connect(ctx.destination);
+        osc.start(t); osc.stop(t + (i === 3 ? 1.05 : 0.5));
       });
     });
   }, []);
 
-  const wake = useCallback(() => {
-    getCtx(ctxRef);
-  }, []);
+  const wake = useCallback(() => { getCtx(ctxRef); }, []);
 
-  return { playTick, startCheering, stopCheering, playFanfare, wake };
+  return { playTick, startTension, stopTension, playEnvelopeWoosh, playEnvelopeOpen, playFanfare, wake };
 }

@@ -1,70 +1,82 @@
 import { useState, useCallback } from 'react';
 import confetti from 'canvas-confetti';
-import { Wheel } from './components/Wheel';
-import { ModeToggle } from './components/ModeToggle';
+import { Wheel }         from './components/Wheel';
+import { ModeToggle }    from './components/ModeToggle';
 import { ResultDisplay } from './components/ResultDisplay';
-import { Stats } from './components/Stats';
-import { useSound } from './hooks/useSound';
-import { useStats } from './hooks/useStats';
+import { Envelope }      from './components/Envelope';
+import { Stats }         from './components/Stats';
+import { useSound }      from './hooks/useSound';
+import { useStats }      from './hooks/useStats';
 import './App.css';
 
-const HANNAH_COLORS = ['#FF5FA0', '#FF3D85', '#FFD700', '#FF69B4', '#ffffff'];
-const ELVIE_COLORS  = ['#9B59FF', '#7B3FDF', '#FFD700', '#00BFFF', '#ffffff'];
+const HANNAH_COLORS = ['#FF1A6E','#FF4187','#FFD700','#FF69B4','#ffffff'];
+const ELVIE_COLORS  = ['#6600FF','#7B2BFF','#FFD700','#00BFFF','#ffffff'];
 
 function fireConfetti(winner) {
   const colors = winner === 'Hannah' ? HANNAH_COLORS : ELVIE_COLORS;
-  const opts = { particleCount: 90, spread: 60, colors, startVelocity: 45 };
+  const opts = { particleCount: 100, spread: 65, colors, startVelocity: 48 };
   confetti({ ...opts, angle: 55,  origin: { x: 0,    y: 0.65 } });
   confetti({ ...opts, angle: 125, origin: { x: 1,    y: 0.65 } });
   setTimeout(() => {
-    confetti({ ...opts, particleCount: 60, angle: 75,  origin: { x: 0.15, y: 0.7 } });
-    confetti({ ...opts, particleCount: 60, angle: 105, origin: { x: 0.85, y: 0.7 } });
-  }, 400);
+    confetti({ ...opts, particleCount: 70, angle: 75,  origin: { x: 0.15, y: 0.7 } });
+    confetti({ ...opts, particleCount: 70, angle: 105, origin: { x: 0.85, y: 0.7 } });
+  }, 380);
 }
 
 export default function App() {
-  const [mode, setMode]         = useState('normal');
-  const [spinning, setSpinning] = useState(false);
-  const [winner, setWinner]     = useState(null);
+  const [mode, setMode]             = useState('normal');
+  const [spinning, setSpinning]     = useState(false);
+  const [winner, setWinner]         = useState(null);
   const [showResult, setShowResult] = useState(false);
-  const { stats, addSpin, resetStats } = useStats();
-  const { playTick, startCheering, stopCheering, playFanfare, wake } = useSound();
+  const [showEnvelope, setShowEnvelope] = useState(false);
+
+  const { stats, addSpin } = useStats();
+  const {
+    playTick, startTension, stopTension,
+    playEnvelopeWoosh, playEnvelopeOpen, playFanfare, wake,
+  } = useSound();
 
   const handleSpin = useCallback(() => {
     wake();
     const picked = Math.random() < 0.5 ? 'Hannah' : 'Elvie';
     setWinner(picked);
     setShowResult(false);
+    setShowEnvelope(false);
     setSpinning(true);
-    if (mode === 'dramatic') startCheering();
-  }, [mode, startCheering, wake]);
+    if (mode === 'dramatic') startTension();
+  }, [mode, startTension, wake]);
 
   const handleTick = useCallback((progress) => {
     playTick(progress);
   }, [playTick]);
 
-  const handleDramaticMoment = useCallback((w) => {
-    fireConfetti(w);
-  }, []);
+  // Fired at 82% of dramatic spin when blur begins — nothing extra needed now
+  const handleBlurStart = useCallback(() => {}, []);
 
   const handleComplete = useCallback((w) => {
     setSpinning(false);
-    setShowResult(true);
     addSpin(w);
+
     if (mode === 'dramatic') {
-      stopCheering(1.2);
-      setTimeout(() => fireConfetti(w), 600);
-      setTimeout(() => playFanfare(), 1400);
+      stopTension(0.8);
+      setShowEnvelope(true);   // envelope takes over from here
     } else {
+      setShowResult(true);
       playFanfare();
       fireConfetti(w);
     }
-  }, [mode, addSpin, stopCheering, playFanfare]);
+  }, [mode, addSpin, stopTension, playFanfare]);
+
+  // Called by Envelope when reveal is complete
+  const handleEnvelopeDone = useCallback(() => {
+    if (winner) fireConfetti(winner);
+  }, [winner]);
 
   const handleModeChange = (m) => {
     if (spinning) return;
     setMode(m);
     setShowResult(false);
+    setShowEnvelope(false);
   };
 
   return (
@@ -83,8 +95,19 @@ export default function App() {
           mode={mode}
           onComplete={handleComplete}
           onTick={handleTick}
-          onDramaticMoment={handleDramaticMoment}
+          onBlurStart={handleBlurStart}
         />
+
+        {/* Envelope overlays the wheel in dramatic mode */}
+        {showEnvelope && winner && (
+          <Envelope
+            winner={winner}
+            onDone={handleEnvelopeDone}
+            playWoosh={playEnvelopeWoosh}
+            playOpen={playEnvelopeOpen}
+            playFanfare={playFanfare}
+          />
+        )}
       </div>
 
       <button
@@ -92,12 +115,13 @@ export default function App() {
         onClick={handleSpin}
         disabled={spinning}
       >
-        {spinning ? (mode === 'dramatic' ? '🎭' : '...') : 'SPIN!'}
+        {spinning ? (mode === 'dramatic' ? '🎭' : '…') : 'SPIN!'}
       </button>
 
-      <ResultDisplay winner={winner} mode={mode} visible={showResult} />
+      {/* Normal mode result only */}
+      <ResultDisplay winner={winner} visible={showResult} />
 
-      <Stats stats={stats} onReset={resetStats} />
+      <Stats stats={stats} />
     </div>
   );
 }

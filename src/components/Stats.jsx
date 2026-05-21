@@ -1,4 +1,4 @@
-export function Stats({ stats, onReset }) {
+export function Stats({ stats }) {
   const { total, hannahCount, elvieCount, last5, streak } = stats;
 
   const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
@@ -52,11 +52,6 @@ export function Stats({ stats, onReset }) {
         )}
       </div>
 
-      {total > 0 && (
-        <button className="reset-btn" onClick={onReset}>
-          Reset Stats
-        </button>
-      )}
     </div>
   );
 }
