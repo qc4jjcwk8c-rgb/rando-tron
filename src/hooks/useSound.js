@@ -32,11 +32,13 @@ export function useSound() {
   const beepTimers  = useRef([]);
 
   // ── iOS audio unlock: play silent buffer on first touch/click ────────────────
+  // IMPORTANT: must be fully synchronous — async/await breaks the user-gesture
+  // context in iOS PWA standalone mode, causing all subsequent audio to be blocked.
   useEffect(() => {
-    const unlock = async () => {
+    const unlock = () => {
       try {
         const ctx = getCtx(ctxRef);
-        if (ctx.state === 'suspended') await ctx.resume();
+        ctx.resume(); // fire-and-forget — do NOT await (would exit gesture context)
         const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
         const src = ctx.createBufferSource();
         src.buffer = buf;
@@ -53,10 +55,12 @@ export function useSound() {
   }, []);
 
   // ── Resume AudioContext when app comes back to foreground (iOS PWA) ──────────
+  // iOS can set state to 'suspended' OR 'interrupted' after backgrounding.
   useEffect(() => {
     const handleVis = () => {
-      if (document.visibilityState === 'visible' && ctxRef.current?.state === 'suspended') {
-        ctxRef.current.resume();
+      if (document.visibilityState === 'visible') {
+        const ctx = ctxRef.current;
+        if (ctx && ctx.state !== 'running') ctx.resume();
       }
     };
     document.addEventListener('visibilitychange', handleVis);
@@ -381,12 +385,12 @@ export function useSound() {
     });
   }, []);
 
-  // Wake + silent-buffer unlock (called on the SPIN button press)
-  const wake = useCallback(async () => {
+  // Wake + silent-buffer unlock (called synchronously inside the SPIN button handler)
+  // Must stay synchronous — iOS PWA kills audio permission the moment we await anything.
+  const wake = useCallback(() => {
     try {
       const ctx = getCtx(ctxRef);
-      if (ctx.state === 'suspended') await ctx.resume();
-      // Play a silent buffer — required by some iOS versions to fully unlock audio
+      ctx.resume(); // fire-and-forget — no await
       const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
       const src = ctx.createBufferSource();
       src.buffer = buf;
