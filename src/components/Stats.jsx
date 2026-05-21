@@ -1,13 +1,38 @@
-export function Stats({ stats }) {
+import { useState, useRef } from 'react';
+
+export function Stats({ stats, onReset }) {
   const { total, hannahCount, elvieCount, last5, streak } = stats;
+  const [confirming, setConfirming] = useState(false);
+  const timerRef = useRef(null);
 
-  const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
-
+  const pct     = (n) => (total ? Math.round((n / total) * 100) : 0);
   const initial = (name) => name[0];
+
+  const handleResetClick = () => {
+    if (!confirming) {
+      // First tap — enter confirm state, auto-cancel after 3 s
+      setConfirming(true);
+      timerRef.current = setTimeout(() => setConfirming(false), 3000);
+    } else {
+      // Second tap — confirmed, reset
+      clearTimeout(timerRef.current);
+      setConfirming(false);
+      onReset();
+    }
+  };
 
   return (
     <div className="stats-section">
-      <h2 className="stats-title">Statistics</h2>
+      <div className="stats-title-row">
+        <h2 className="stats-title">Statistics</h2>
+        <button
+          className={`reset-btn ${confirming ? 'confirming' : ''}`}
+          onClick={handleResetClick}
+          disabled={total === 0}
+        >
+          {confirming ? 'Tap again to confirm' : 'Reset'}
+        </button>
+      </div>
 
       <div className="stats-card">
         <div className="stats-label">Last 5 spins</div>

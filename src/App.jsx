@@ -38,7 +38,7 @@ export default function App() {
   const [showResult, setShowResult] = useState(false);
   const [showEnvelope, setShowEnvelope] = useState(false);
 
-  const { stats, addSpin } = useStats();
+  const { stats, addSpin, resetStats } = useStats();
   const {
     playTick,
     startDrone, startCrowd, startCountdown, startBeeping,
@@ -157,7 +157,7 @@ export default function App() {
 
       <ResultDisplay winner={winner} visible={showResult} />
 
-      <Stats stats={stats} />
+      <Stats stats={stats} onReset={resetStats} />
     </div>
   );
 }

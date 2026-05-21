@@ -407,14 +407,52 @@
   padding-top: 4px;
 }
 
+.stats-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 2px;
+}
+
 .stats-title {
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
   color: var(--muted);
-  text-align: left;
-  padding-left: 2px;
+}
+
+.reset-btn {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+  white-space: nowrap;
+}
+.reset-btn:hover:not(:disabled) {
+  color: #ff4444;
+  border-color: #ff4444;
+}
+.reset-btn.confirming {
+  color: #ff4444;
+  border-color: #ff4444;
+  background: rgba(255,68,68,0.12);
+  animation: pulse-red 0.6s ease-in-out infinite alternate;
+}
+.reset-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+@keyframes pulse-red {
+  from { box-shadow: 0 0 0 0 rgba(255,68,68,0); }
+  to   { box-shadow: 0 0 8px 2px rgba(255,68,68,0.35); }
 }
 
 .stats-card {

@@ -52,6 +52,12 @@ export function useStats() {
     return () => supabase.removeChannel(channel);
   }, []);
 
+  const resetStats = useCallback(async () => {
+    setSpins([]);
+    if (!supabase) return;
+    await supabase.from('spins').delete().neq('id', '00000000-0000-0000-0000-000000000000'); // delete all rows
+  }, []);
+
   const addSpin = useCallback(async (winner) => {
     // Optimistic update so stats appear instantly on the spinning phone
     const tempId = `temp-${Date.now()}`;
@@ -88,5 +94,6 @@ export function useStats() {
       streak: longestStreak(spins),
     },
     addSpin,
+    resetStats,
   };
 }
