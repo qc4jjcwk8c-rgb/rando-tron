@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 
 function getCtx(ref) {
   if (!ref.current) {
@@ -28,8 +28,40 @@ function makePinkNoise(ctx, sec = 12) {
 
 export function useSound() {
   const ctxRef      = useRef(null);
-  const ambientRef  = useRef(null);   // holds running ambient for all modes
-  const beepTimers  = useRef([]);     // oscillator nodes for beeping mode
+  const ambientRef  = useRef(null);
+  const beepTimers  = useRef([]);
+
+  // ── iOS audio unlock: play silent buffer on first touch/click ────────────────
+  useEffect(() => {
+    const unlock = async () => {
+      try {
+        const ctx = getCtx(ctxRef);
+        if (ctx.state === 'suspended') await ctx.resume();
+        const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch {}
+    };
+    document.addEventListener('touchstart', unlock, { once: true, passive: true });
+    document.addEventListener('mousedown',  unlock, { once: true });
+    return () => {
+      document.removeEventListener('touchstart', unlock);
+      document.removeEventListener('mousedown',  unlock);
+    };
+  }, []);
+
+  // ── Resume AudioContext when app comes back to foreground (iOS PWA) ──────────
+  useEffect(() => {
+    const handleVis = () => {
+      if (document.visibilityState === 'visible' && ctxRef.current?.state === 'suspended') {
+        ctxRef.current.resume();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVis);
+    return () => document.removeEventListener('visibilitychange', handleVis);
+  }, []);
 
   // ════════════════════════════════════════════════════════
   // TICK  (wheel ratchet click — used in every mode)
@@ -49,7 +81,7 @@ export function useSound() {
   }, []);
 
   // ════════════════════════════════════════════════════════
-  // STOP AMBIENT  (used to clean up any running mode)
+  // STOP AMBIENT
   // ════════════════════════════════════════════════════════
   const stopAmbient = useCallback((fade = 1.2) => {
     if (!ambientRef.current) return;
@@ -98,7 +130,8 @@ export function useSound() {
   }, []);
 
   // ════════════════════════════════════════════════════════
-  // MODE: CROWD
+  // MODE: CROWD CHEER
+  // Layered clapping + crowd roar + "Woo!" voice sweeps
   // ════════════════════════════════════════════════════════
   const startCrowd = useCallback(() => {
     const ctx = getCtx(ctxRef);
@@ -106,49 +139,70 @@ export function useSound() {
 
     const master = ctx.createGain();
     master.gain.setValueAtTime(0, ctx.currentTime);
-    master.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 1.2);
+    master.gain.linearRampToValueAtTime(0.4, ctx.currentTime + 0.8);
     master.connect(ctx.destination);
     const nodes = [];
+    const now = ctx.currentTime;
 
-    // ── Base crowd murmur: pink noise through 2 bandpass filters ──
-    const nBuf = makePinkNoise(ctx, 15);
-    const nSrc = ctx.createBufferSource(); nSrc.buffer = nBuf; nSrc.loop = true;
-    const bp1  = ctx.createBiquadFilter(); bp1.type='bandpass'; bp1.frequency.value=900;  bp1.Q.value=1.2;
-    const bp2  = ctx.createBiquadFilter(); bp2.type='bandpass'; bp2.frequency.value=2400; bp2.Q.value=1.5;
-    const noiseG = ctx.createGain(); noiseG.gain.value = 0.55;
-    nSrc.connect(bp1); bp1.connect(noiseG);
-    nSrc.connect(bp2); bp2.connect(noiseG);
-    noiseG.connect(master); nSrc.start();
-    nodes.push(nSrc);
+    // ── CROWD ROAR: pink noise through vocal-tract formant filters ──────
+    // Three layers simulate the combined resonance of a large crowd
+    [[750, 2.5, 0.22], [1500, 2.0, 0.16], [2900, 1.5, 0.09]].forEach(([freq, Q, vol]) => {
+      const nBuf = makePinkNoise(ctx, 15);
+      const nSrc = ctx.createBufferSource(); nSrc.buffer = nBuf; nSrc.loop = true;
+      const bp   = ctx.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(freq, now);
+      bp.frequency.linearRampToValueAtTime(freq * 1.12, now + 9); // crowd energy rising
+      bp.Q.value = Q;
+      const g = ctx.createGain(); g.gain.value = vol;
+      nSrc.connect(bp); bp.connect(g); g.connect(master); nSrc.start();
+      nodes.push(nSrc);
+    });
 
-    // ── Chanting / "Let's go!" rhythm  (sawtooth voices, 2.5 Hz pulse) ──
-    [[160,'sawtooth',900,0.25],[210,'sawtooth',1150,0.2],[130,'sawtooth',600,0.18]]
-      .forEach(([fund, type, formant, vol]) => {
-        const osc = ctx.createOscillator(); osc.type = type; osc.frequency.value = fund;
-        const bp  = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = formant; bp.Q.value = 3;
-        const chantLfo = ctx.createOscillator(); chantLfo.type='sine'; chantLfo.frequency.value = 2.5;
-        const chantG   = ctx.createGain();        chantG.gain.value = 0.35;
-        chantLfo.connect(chantG); chantG.connect(bp.frequency);
-        const g = ctx.createGain(); g.gain.value = vol;
-        osc.connect(bp); bp.connect(g); g.connect(master);
-        osc.start(); chantLfo.start();
-        nodes.push(osc, chantLfo);
-      });
-
-    // ── Crowd swell LFO (overall wave energy) ──
-    const swellLfo = ctx.createOscillator(); swellLfo.frequency.value = 0.4; swellLfo.type='sine';
-    const swellG   = ctx.createGain(); swellG.gain.value = 0.1;
-    swellLfo.connect(swellG); swellG.connect(master.gain); swellLfo.start(); nodes.push(swellLfo);
-
-    // ── Occasional cheer bursts (random spikes) ──
-    for (let i = 0; i < 8; i++) {
-      const t  = ctx.currentTime + 1.5 + Math.random() * 9;
-      const burst = ctx.createGain();
-      burst.gain.setValueAtTime(0, t);
-      burst.gain.linearRampToValueAtTime(0.25, t + 0.12);
-      burst.gain.linearRampToValueAtTime(0, t + 0.6);
-      noiseG.connect(burst); burst.connect(master);
+    // ── CLAPPING: rhythmic hand-clap transients at ~120 BPM ─────────────
+    // Real claps are broadband transients peaking around 1–3 kHz
+    const bpm  = 120;
+    const beat = 60 / bpm; // 0.5s between beats
+    for (let i = 0; i < 22; i++) {
+      const t      = now + 0.2 + i * beat + (Math.random() - 0.5) * 0.025;
+      const cLen   = Math.floor(ctx.sampleRate * 0.055);
+      const cBuf   = ctx.createBuffer(1, cLen, ctx.sampleRate);
+      const cd     = cBuf.getChannelData(0);
+      for (let j = 0; j < cLen; j++) {
+        cd[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / cLen, 1.8);
+      }
+      const cSrc = ctx.createBufferSource(); cSrc.buffer = cBuf;
+      const cBp  = ctx.createBiquadFilter(); cBp.type = 'bandpass';
+      cBp.frequency.value = 1600 + Math.random() * 800;
+      cBp.Q.value = 0.6;
+      const cg = ctx.createGain();
+      // Clapping builds in intensity as excitement rises
+      cg.gain.value = 0.15 + (i / 22) * 0.22;
+      cSrc.connect(cBp); cBp.connect(cg); cg.connect(master);
+      cSrc.start(t); nodes.push(cSrc);
     }
+
+    // ── "WOOOO!" SWEEPS: individual voices rising in pitch ──────────────
+    // Sawtooth (voice-like) filtered through bandpass, pitching upward
+    for (let i = 0; i < 7; i++) {
+      const t    = now + 0.4 + i * 1.55 + Math.random() * 0.5;
+      const osc  = ctx.createOscillator(); osc.type = 'sawtooth';
+      const lo   = 160 + Math.random() * 60;
+      const hi   = 300 + Math.random() * 100;
+      osc.frequency.setValueAtTime(lo, t);
+      osc.frequency.linearRampToValueAtTime(hi, t + 0.55); // rising "Woo"
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.value = 1100 + Math.random() * 400;
+      bp.Q.value = 3.5;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.13 + Math.random() * 0.09, t + 0.06);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.7 + Math.random() * 0.3);
+      osc.connect(bp); bp.connect(g); g.connect(master);
+      osc.start(t); osc.stop(t + 1.2); nodes.push(osc);
+    }
+
+    // ── ENERGY SWELL: overall crowd gets louder as tension builds ────────
+    master.gain.linearRampToValueAtTime(0.62, now + 9);
 
     ambientRef.current = { nodes, master };
   }, []);
@@ -166,17 +220,17 @@ export function useSound() {
     master.connect(ctx.destination);
     const nodes = [];
 
-    // ── Bass ostinato (low pulsing note) ──
+    // ── Bass ostinato ──
     const bass = ctx.createOscillator(); bass.type='sawtooth'; bass.frequency.value=55;
     const bassLp = ctx.createBiquadFilter(); bassLp.type='lowpass'; bassLp.frequency.value=180;
     const bassLfo = ctx.createOscillator(); bassLfo.frequency.value=2; bassLfo.type='square';
     const bassLfoG = ctx.createGain(); bassLfoG.gain.value=0.5;
-    bassLfo.connect(bassLfoG); bassLfoG.connect(bassLp.gain || bassLp.frequency);
+    bassLfo.connect(bassLfoG); bassLfoG.connect(bassLp.frequency);
     const bassG = ctx.createGain(); bassG.gain.value=0.5;
     bass.connect(bassLp); bassLp.connect(bassG); bassG.connect(master);
     bass.start(); bassLfo.start(); nodes.push(bass, bassLfo);
 
-    // ── Rising string pad (layered sawtooths detuned) ──
+    // ── Rising string pad ──
     [[220,0],[220.5,1],[219.5,-1],[440,0.5]].forEach(([freq, detune]) => {
       const osc = ctx.createOscillator(); osc.type='sawtooth'; osc.frequency.value=freq;
       osc.detune.value = detune * 8;
@@ -188,7 +242,7 @@ export function useSound() {
       osc.connect(lp); lp.connect(g); g.connect(master); osc.start(); nodes.push(osc);
     });
 
-    // ── Accelerating tick / percussive click ──
+    // ── Accelerating percussive tick ──
     const tick = () => {
       const blen = Math.floor(ctx.sampleRate * 0.025);
       const bbuf = ctx.createBuffer(1, blen, ctx.sampleRate);
@@ -211,7 +265,7 @@ export function useSound() {
     }
     nodes.push(...tickNodes);
 
-    // ── Periodic "dun-dun" orchestral hits ──
+    // ── Orchestral dun-dun hits ──
     [[0.5,110],[1.5,98],[2.5,110],[4,87],[6,98],[8,110],[9.5,130]].forEach(([t, freq]) => {
       const o = ctx.createOscillator(); o.type='triangle'; o.frequency.value=freq;
       const g = ctx.createGain();
@@ -233,7 +287,6 @@ export function useSound() {
     beepTimers.current.forEach(n => { try { n.stop(); } catch {} });
     beepTimers.current = [];
 
-    // Pre-schedule all beeps on the AudioContext timeline
     let t        = ctx.currentTime + 0.3;
     let interval = 0.65;
     let vol      = 0.07;
@@ -242,7 +295,6 @@ export function useSound() {
     const allNodes = [];
 
     while (t < end) {
-      // Main beep
       const osc = ctx.createOscillator(); osc.type = 'sine';
       osc.frequency.value = pitch;
       const g   = ctx.createGain();
@@ -255,7 +307,6 @@ export function useSound() {
       osc.start(t); osc.stop(t + dur + 0.02);
       allNodes.push(osc);
 
-      // Subtle high harmonic for "digital" character
       const h  = ctx.createOscillator(); h.type='sine'; h.frequency.value = pitch * 3;
       const hg = ctx.createGain();
       hg.gain.setValueAtTime(0, t); hg.gain.linearRampToValueAtTime(vol*0.12, t+0.008);
@@ -290,7 +341,6 @@ export function useSound() {
 
   const playEnvelopeOpen = useCallback(() => {
     const ctx = getCtx(ctxRef);
-    // Paper rustle
     const nlen = Math.floor(ctx.sampleRate * 0.18);
     const nbuf = ctx.createBuffer(1, nlen, ctx.sampleRate);
     const nd   = nbuf.getChannelData(0);
@@ -299,7 +349,6 @@ export function useSound() {
     const hp = ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=5000;
     const ng = ctx.createGain(); ng.gain.value=0.28;
     ns.connect(hp); hp.connect(ng); ng.connect(ctx.destination); ns.start();
-    // Rising bell
     const bell = ctx.createOscillator(); bell.type='sine';
     bell.frequency.setValueAtTime(350, ctx.currentTime);
     bell.frequency.linearRampToValueAtTime(900, ctx.currentTime + 0.35);
@@ -332,17 +381,25 @@ export function useSound() {
     });
   }, []);
 
-  const wake = useCallback(() => { getCtx(ctxRef); }, []);
+  // Wake + silent-buffer unlock (called on the SPIN button press)
+  const wake = useCallback(async () => {
+    try {
+      const ctx = getCtx(ctxRef);
+      if (ctx.state === 'suspended') await ctx.resume();
+      // Play a silent buffer — required by some iOS versions to fully unlock audio
+      const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch {}
+  }, []);
 
   return {
     playTick,
-    // ambient starters
     startDrone, startCrowd, startCountdown, startBeeping,
-    // ambient stopper (works for drone / crowd / countdown; beeping uses stopBeeping)
     stopAmbient, stopBeeping,
-    // envelope
     playEnvelopeWoosh, playEnvelopeOpen,
-    // result
     playFanfare,
     wake,
   };

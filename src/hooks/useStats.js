@@ -20,6 +20,8 @@ export function useStats() {
   const [spins, setSpins] = useState([]);
 
   useEffect(() => {
+    if (!supabase) return; // local-only mode — env vars not configured
+
     // ── Initial load ─────────────────────────────────
     supabase
       .from('spins')
@@ -55,6 +57,8 @@ export function useStats() {
     const tempId = `temp-${Date.now()}`;
     const tempSpin = { id: tempId, winner, created_at: new Date().toISOString() };
     setSpins((prev) => [...prev, tempSpin]);
+
+    if (!supabase) return; // local-only mode
 
     // Persist to Supabase — real-time subscription on the OTHER phone
     // will fire and update their stats automatically.
