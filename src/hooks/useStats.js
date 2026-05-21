@@ -1,24 +1,10 @@
-import { useState, useCallback } from 'react';
-
-const KEY = 'rando-tron-stats-v1';
-
-function load() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? JSON.parse(raw) : { spins: [] };
-  } catch {
-    return { spins: [] };
-  }
-}
-
-function save(s) {
-  localStorage.setItem(KEY, JSON.stringify(s));
-}
+import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../lib/supabase';
 
 function longestStreak(spins) {
   if (!spins.length) return { name: null, count: 0 };
   let best = { name: spins[0].winner, count: 1 };
-  let cur = { name: spins[0].winner, count: 1 };
+  let cur  = { name: spins[0].winner, count: 1 };
   for (let i = 1; i < spins.length; i++) {
     if (spins[i].winner === cur.name) {
       cur.count++;
@@ -31,31 +17,72 @@ function longestStreak(spins) {
 }
 
 export function useStats() {
-  const [raw, setRaw] = useState(load);
+  const [spins, setSpins] = useState([]);
 
-  const addSpin = useCallback((winner) => {
-    setRaw((prev) => {
-      const next = { spins: [...prev.spins, { winner, ts: Date.now() }] };
-      save(next);
-      return next;
-    });
+  useEffect(() => {
+    // ── Initial load ─────────────────────────────────
+    supabase
+      .from('spins')
+      .select('id, winner, created_at')
+      .order('created_at', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data) setSpins(data);
+      });
+
+    // ── Real-time: catch inserts from either phone ───
+    // Both phones subscribe to the same channel. When one
+    // phone spins, the other sees the stat update instantly.
+    const channel = supabase
+      .channel('spins-sync')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'spins' },
+        (payload) => {
+          setSpins((prev) => {
+            // Guard against duplicates (own insert already optimistically added)
+            if (prev.some((s) => s.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
-  const resetStats = useCallback(() => {
-    const empty = { spins: [] };
-    save(empty);
-    setRaw(empty);
+  const addSpin = useCallback(async (winner) => {
+    // Optimistic update so stats appear instantly on the spinning phone
+    const tempId = `temp-${Date.now()}`;
+    const tempSpin = { id: tempId, winner, created_at: new Date().toISOString() };
+    setSpins((prev) => [...prev, tempSpin]);
+
+    // Persist to Supabase — real-time subscription on the OTHER phone
+    // will fire and update their stats automatically.
+    const { data } = await supabase
+      .from('spins')
+      .insert({ winner })
+      .select()
+      .single();
+
+    // Swap temp entry for the real DB row (prevents duplicate when
+    // real-time fires on this same phone)
+    if (data) {
+      setSpins((prev) => prev.map((s) => (s.id === tempId ? data : s)));
+    }
   }, []);
 
-  const total = raw.spins.length;
-  const hannahCount = raw.spins.filter((s) => s.winner === 'Hannah').length;
-  const elvieCount = raw.spins.filter((s) => s.winner === 'Elvie').length;
-  const last5 = raw.spins.slice(-5);
-  const streak = longestStreak(raw.spins);
+  const total       = spins.length;
+  const hannahCount = spins.filter((s) => s.winner === 'Hannah').length;
+  const elvieCount  = spins.filter((s) => s.winner === 'Elvie').length;
 
   return {
-    stats: { total, hannahCount, elvieCount, last5, streak },
+    stats: {
+      total,
+      hannahCount,
+      elvieCount,
+      last5:  spins.slice(-5),
+      streak: longestStreak(spins),
+    },
     addSpin,
-    resetStats,
   };
 }
